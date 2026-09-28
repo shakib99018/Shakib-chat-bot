@@ -4,7 +4,7 @@ const moment = require("moment-timezone");
 const getStreamFromURL = global.utils.getStreamFromURL;
 
 const gifList = [
-	"https://i.postimg.cc/7hjs8H2n/nxai-prefix.gif"
+	"https://i.postimg.cc/4Nc9WZcb/37c213627014c4a98f20321a2e3f9079.gif"
 ];
 
 const getRandomGif = () =>
@@ -13,12 +13,12 @@ const getRandomGif = () =>
 module.exports = {
 	config: {
 		name: "prefix",
-		version: "3.0",
-		author: "xalman",
+		version: "2.2",
+		author: "Siam Ahmed Saan",
 		countDown: 5,
 		role: 0,
 		description: "Change & show bot prefix ",
-		category: "system"
+		category: "config"
 	},
 
 	langs: {
@@ -111,17 +111,19 @@ module.exports = {
 		const time = moment().tz("Asia/Dhaka").format("hh:mm A");
 		const date = moment().tz("Asia/Dhaka").format("DD MMM YYYY");
 
-		const owner = global.GoatBot.config.adminName || "Xalman";
+		const owner = global.GoatBot.config.adminName || "𝗦𝗶𝗮𝗺 𝗔𝗵𝗺𝗲𝗱 𝗦𝗮𝗮𝗻";
 
 		return message.reply({
 			body:
-`╭─〔 🤖 𝐁𝐎𝐓 𝐏𝐑𝐄𝐅𝐈𝐗 〕─╮
-│ 🌐 𝐆𝐑𝐎𝐔𝐏 𝐍𝐀𝐌𝐄  —> ${groupName}
-│ ⚡ 𝐏𝐑𝐄𝐅𝐈𝐗 ─>「 ${systemPrefix} 」
-│ 💬 𝐆𝐑𝐎𝐔𝐏  ─>『 ${groupPrefix} 』
-│ 🕐 𝐓𝐈𝐌𝐄  ─>  ${time} • ${date}
-│ ⚙️ 𝐒𝐘𝐒𝐓𝐄𝐌  •   𝐎𝐍𝐋𝐈𝐍𝐄
-╰─〔 ✦𝐏𝐎𝐖𝐄𝐑𝐄𝐃 𝐁𝐘 𝐗𝐀𝐋𝐌𝐀𝐍✦ 〕─╯`,
+`╭━━━〔 🤖 CHATBOT PREFIX 〕━━━╮
+┃ 🏷️ Group : ${groupName}
+┃ 🔰 System : 『 ${systemPrefix} 』
+┃ 💬 Group  : 『 ${groupPrefix} 』
+┃ ⏰ Time   : ${time}
+┃ 📅 Date   : ${date}
+┃ 👑 Owner  : ${owner}
+┃ ⚡ Status : ONLINE
+╰━━━〔 ✨ Powered by 𝗦𝗮𝗮𝗻 𝗘𝘅𝗵𝗮𝘂𝘀𝘁𝗲𝗱 〕━━━╯`,
 			attachment: await getStreamFromURL(gif)
 		});
 	}
