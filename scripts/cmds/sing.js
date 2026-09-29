@@ -1,179 +1,215 @@
 const axios = require("axios");
-const yts = require("yt-search");
+
+const API_CONFIG_URL = "https://raw.githubusercontent.com/goatbotnx/xalmanx210/refs/heads/main/apis.json";
+const API_KEY = "xalman-hub";
+let apiBaseUrl = null;
+let apiConfigRequest = null;
+
+async function getApiBaseUrl() {
+  if (apiBaseUrl) return apiBaseUrl;
+
+  if (!apiConfigRequest) {
+    apiConfigRequest = axios
+      .get(API_CONFIG_URL, { timeout: 15000 })
+      .then(({ data }) => {
+        const baseUrl = data?.[API_KEY];
+
+        if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+          throw new Error(`Missing API key in apis.json: ${API_KEY}`);
+        }
+
+        apiBaseUrl = baseUrl.replace(/\/+$/, "");
+        return apiBaseUrl;
+      })
+      .finally(() => {
+        apiConfigRequest = null;
+      });
+  }
+
+  return apiConfigRequest;
+}
 const fs = require("fs");
 const path = require("path");
+const { createReadStream } = require("fs");
 
-const CACHE_DIR = path.join(__dirname, "cache");
-const SONG_API_BASE = "https://eryxenx.agi.bd/api/song";
+module.exports = {
+  config: {
+    name: "sing",
+    version: "3.5",
+    author: "xalman",
+    countDown: 5,
+    role: 0,
+    shortDescription: "Search or download MP3",
+    longDescription: "Search songs and download MP3 from YouTube",
+    category: "MEDIA",
+    guide: "{p}sing <song name or YouTube link>"
+  },
 
-async function fetchSongInfo(videoUrl) {
-	const infoRes = await axios.get(SONG_API_BASE, {
-		params: { url: videoUrl },
-		timeout: 60000
-	});
+  onStart: async function ({ api, event, args }) {
+    const { threadID, messageID, senderID, messageReply } = event;
+    const BASE_URL = `${await getApiBaseUrl()}/api`;
 
-	const data = infoRes.data;
-	if (!data?.success || !data?.downloadUrl) {
-		throw new Error(data?.error || "downloadUrl paoa jayni API response e");
-	}
-	return data;
-}
+    let query = args.join(" ");
 
-async function streamDownloadToFile(dlUrl, filePath) {
-	if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+    if (messageReply?.body) {
+      const match = messageReply.body.match(/(https?:\/\/[^\s]+)/);
+      if (match?.[0]?.includes("youtu")) {
+        return downloadAudio(api, threadID, messageID, match[0], BASE_URL);
+      }
+    }
 
-	const response = await axios.get(dlUrl, {
-		responseType: "stream",
-		timeout: 300000,
-		maxContentLength: Infinity,
-		maxBodyLength: Infinity,
-		headers: {
-			"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1"
-		}
-	});
+    if (query && query.includes("youtu")) {
+      return downloadAudio(api, threadID, messageID, query, BASE_URL);
+    }
 
-	const contentType = response.headers["content-type"] || "";
-	const isValid = contentType.includes("video") || contentType.includes("audio") || contentType.includes("octet-stream");
+    if (!query) {
+      return api.sendMessage("❌ Please provide a song name or YouTube link.", threadID, messageID);
+    }
 
-	if (!isValid) {
-		let bodyText = "";
-		try {
-			const chunks = [];
-			for await (const chunk of response.data) {
-				chunks.push(chunk);
-				if (Buffer.concat(chunks).length > 2000) break;
-			}
-			bodyText = Buffer.concat(chunks).toString("utf-8").slice(0, 500);
-		} catch (_) {}
+    try {
+      const { data } = await axios.get(`${BASE_URL}/ytsearch?q=${encodeURIComponent(query)}`);
+      const results = data.results?.slice(0, 5);
 
-		throw new Error(
-			`Invalid content received from downloadUrl (type: ${contentType})` +
-			(bodyText ? ` — upstream said: "${bodyText.trim()}"` : "")
-		);
-	}
+      if (!results || results.length === 0) {
+        return api.sendMessage("❌ No songs found.", threadID, messageID);
+      }
 
-	const writer = fs.createWriteStream(filePath);
+      let msg = "🎵 𝗠𝗨𝗦𝗜𝗖 𝗦𝗘𝗔𝗥𝗖𝗛 𝗥𝗘𝗦𝗨𝗟𝗧𝗦\n━━━━━━━━━━━━━━━\n";
+      const attachments = [];
+      const tempFiles = [];
 
-	await new Promise((resolve, reject) => {
-		response.data.pipe(writer);
-		let failed = false;
-		const onError = (err) => {
-			if (failed) return;
-			failed = true;
-			writer.close();
-			fs.unlink(filePath, () => {});
-			reject(err);
-		};
-		response.data.on("error", onError);
-		writer.on("error", onError);
-		writer.on("close", () => { if (!failed) resolve(); });
-	});
+      for (let i = 0; i < results.length; i++) {
+        const video = results[i];
+        msg += `${i + 1}. ${video.title}\n⏱️ ${video.duration || "N/A"}\n📺 ${video.channel || "Unknown"}\n\n`;
 
-	const stats = fs.statSync(filePath);
-	if (stats.size < 1024) {
-		fs.unlink(filePath, () => {});
-		throw new Error(`Downloaded file too small (${stats.size} bytes) — corrupt ba failed download`);
-	}
-}
+        if (video.thumbnail) {
+          try {
+            const thumbResponse = await axios({
+              url: video.thumbnail,
+              method: "GET",
+              responseType: "arraybuffer"
+            });
 
-function extractApiErrorMessage(err) {
-	const raw = err.response?.data;
+            const tempThumbPath = path.join(__dirname, `temp_thumb_${Date.now()}_${i}.jpg`);
+            fs.writeFileSync(tempThumbPath, thumbResponse.data);
+            tempFiles.push(tempThumbPath);
+            attachments.push(createReadStream(tempThumbPath));
+          } catch (err) {
+            console.error(`Failed to download thumbnail ${i}:`, err.message);
+          }
+        }
+      }
 
-	if (raw && typeof raw === "object" && !Buffer.isBuffer(raw)) {
-		if (raw.error) return raw.error;
-		if (raw.message) return raw.message;
-	}
+      msg += "━━━━━━━━━━━━━━━\n📥 Reply with 1-5 to download";
 
-	if (raw) {
-		try {
-			const text = Buffer.isBuffer(raw) ? raw.toString("utf-8") : String(raw);
-			const parsed = JSON.parse(text);
-			if (parsed?.error) return parsed.error;
-			if (parsed?.message) return parsed.message;
-		} catch (_) {}
-	}
+      const messageData = { body: msg };
+      if (attachments.length > 0) {
+        messageData.attachment = attachments;
+      }
 
-	return err.message;
-}
+      return api.sendMessage(
+        messageData,
+        threadID,
+        (err, info) => {
+          tempFiles.forEach(file => {
+            try {
+              if (fs.existsSync(file)) fs.unlinkSync(file);
+            } catch {}
+          });
 
-function tempFilePath(ext) {
-	if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-	return path.join(CACHE_DIR, `sing_${Date.now()}_${Math.floor(Math.random() * 1e4)}.${ext}`);
-}
+          if (err) return;
 
-async function sendWithRetry(message, msg, retries = 2) {
-	for (let i = 0; i <= retries; i++) {
-		try {
-			return await message.reply(msg);
-		} catch (err) {
-			const is408 = err?.error === 408 || String(err?.message || err).includes("408");
-			if (is408 && i < retries) {
-				console.warn(`[sing] Upload timeout, retrying (${i + 1}/${retries})...`);
-				await new Promise(r => setTimeout(r, 2000));
-				continue;
-			}
-			throw err;
-		}
-	}
-}
+          global.GoatBot.onReply.set(info.messageID, {
+            commandName: this.config.name,
+            messageID: info.messageID,
+            author: senderID,
+            results,
+            baseUrl: BASE_URL
+          });
+        },
+        messageID
+      );
 
-function react(api, messageID, emoji) {
-	try {
-		api.setMessageReaction(emoji, messageID, () => {}, true);
-	} catch (_) {}
-}
+    } catch (err) {
+      console.log(err);
+      return api.sendMessage("⚠️ Search failed.", threadID, messageID);
+    }
+  },
 
-module.exports.config = {
-	name: "sing",
-	aliases: ["song"],
-	version: "2.0.0",
-	author: "EryXenX",
-	countDown: 5,
-	role: 0,
-	shortDescription: "YouTube theke gaan download",
-	longDescription: "Song name diye sorasori mp3 download kore pathay",
-	category: "media",
-	guide: {
-		en: "{pn} <song name>\nExample: {pn} mann mera"
-	}
+  onReply: async function ({ api, event, Reply }) {
+    const { threadID, messageID, body, senderID } = event;
+
+    if (senderID !== Reply.author) return;
+
+    const index = parseInt(body) - 1;
+    if (isNaN(index) || index < 0 || index >= Reply.results.length) {
+      return api.sendMessage("❌ Invalid choice. Choose 1-5.", threadID, messageID);
+    }
+
+    const selected = Reply.results[index];
+
+    try {
+      await api.unsendMessage(Reply.messageID, threadID);
+    } catch {}
+
+    return downloadAudio(api, threadID, messageID, selected.url, Reply.baseUrl, selected.duration);
+  }
 };
 
-module.exports.onStart = async function ({ api, event, args, message }) {
-	const { messageID } = event;
-	const query = args.join(" ").trim();
+async function downloadAudio(api, threadID, messageID, url, baseUrl, duration = "N/A") {
+  let waitMsg;
+  let tempFilePath = null;
 
-	if (!query) {
-		return message.reply("❌ Song name den.\nExample: sing mann mera");
-	}
+  try {
+    waitMsg = await api.sendMessage("⏳ Processing Audio...", threadID);
 
-	react(api, messageID, "⏳");
+    const { data } = await axios.get(`${baseUrl}/ytmp3?url=${encodeURIComponent(url)}`);
 
-	let file;
-	try {
-		const search = await yts(query);
-		const video = search.videos?.[0];
-		if (!video) {
-			react(api, messageID, "❌");
-			return message.reply(`❌ "${query}" er kono result paoa jayni`);
-		}
+    if (!data.success || !data.url) {
+      try { await api.unsendMessage(waitMsg.messageID, threadID); } catch {}
+      return api.sendMessage("❌ Failed to download audio.", threadID, messageID);
+    }
 
-		const info = await fetchSongInfo(video.url);
-		file = tempFilePath("mp3");
-		await streamDownloadToFile(info.downloadUrl, file);
+    const response = await axios({
+      url: data.url,
+      method: "GET",
+      responseType: "arraybuffer"
+    });
 
-		await sendWithRetry(message, {
-			body: `🎶 ${info.title || video.title}\n🕒 ${video.timestamp}`,
-			attachment: fs.createReadStream(file)
-		});
+    tempFilePath = path.join(__dirname, `temp_${Date.now()}.mp3`);
+    fs.writeFileSync(tempFilePath, response.data);
 
-		react(api, messageID, "✅");
-	} catch (err) {
-		console.error(err);
-		react(api, messageID, "❌");
-		return message.reply("❌ Download failed: " + extractApiErrorMessage(err));
-	} finally {
-		if (file) {
-			try { fs.unlinkSync(file); } catch (e) { console.error("[sing] cleanup error:", e.message); }
-		}
-	}
-};
+    try { await api.unsendMessage(waitMsg.messageID, threadID); } catch {}
+
+    return api.sendMessage(
+      {
+        body: `🎵 ${data.title || "Unknown"}\n👤 ${data.author || "Unknown"}\n⏱️ ${duration}`,
+        attachment: createReadStream(tempFilePath)
+      },
+      threadID,
+      (err) => {
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+          try { fs.unlinkSync(tempFilePath); } catch {}
+        }
+        if (err) {
+          console.error("Error sending audio:", err);
+          return api.sendMessage("⚠️ Failed to send audio.", threadID, messageID);
+        }
+      },
+      messageID
+    );
+
+  } catch (err) {
+    console.log(err);
+
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try { fs.unlinkSync(tempFilePath); } catch {}
+    }
+
+    if (waitMsg?.messageID) {
+      try { await api.unsendMessage(waitMsg.messageID, threadID); } catch {}
+    }
+
+    return api.sendMessage("⚠️ Failed to process audio. The file might be too large.", threadID, messageID);
+  }
+}

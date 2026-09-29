@@ -4,11 +4,15 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 module.exports = {
 	config: {
 		name: "adduser",
-		version: "1.5",
+		version: "1.4",
 		author: "NTKhang",
 		countDown: 5,
-		role: 1,
-		description: {
+		role: 0,
+		shortDescription: {
+			vi: "Thêm thành viên vào box chat",
+			en: "Add user to box chat"
+		},
+		longDescription: {
 			vi: "Thêm thành viên vào box chat của bạn",
 			en: "Add user to box chat of you"
 		},
@@ -38,46 +42,6 @@ module.exports = {
 			cannotGetUid: "Cannot get uid of this user",
 			linkNotExist: "This profile url does not exist",
 			cannotAddUser: "Bot is blocked or this user blocked strangers from adding to the group"
-		},
-		tl: {
-			alreadyInGroup: "Nasa grupo na",
-			successAdd: "- Matagumpay na naidagdag ang %1 miyembro sa grupo",
-			failedAdd: "- Nabigo ang pagdaragdag ng %1 miyembro sa grupo",
-			approve: "- Naidagdag ang %1 miyembro sa listahan ng pag-apruba",
-			invalidLink: "Mangyaring maglagay ng wastong facebook link",
-			cannotGetUid: "Hindi makuha ang uid ng user na ito",
-			linkNotExist: "Ang profile url na ito ay hindi umiiral",
-			cannotAddUser: "Naka-block ang bot o naka-block ng user na ito ang mga estranyo mula sa pagdaragdag sa grupo"
-		},
-		hi: {
-			alreadyInGroup: "Pehle se group mein hai",
-			successAdd: "- %1 members ko group mein successfully add kar diya gaya",
-			failedAdd: "- %1 members ko group mein add karne mein fail",
-			approve: "- %1 members ko approval list mein add kar diya gaya",
-			invalidLink: "Kripya valid facebook link dalein",
-			cannotGetUid: "Is user ka uid nahi mil sakta",
-			linkNotExist: "Ye profile url exist nahi karta",
-			cannotAddUser: "Bot blocked hai ya is user ne strangers ko group mein add karne se block kar rakha hai"
-		},
-		ar: {
-			alreadyInGroup: "موجود بالفعل في المجموعة",
-			successAdd: "- تمت إضافة %1 عضو بنجاح إلى المجموعة",
-			failedAdd: "- فشل إضافة %1 عضو إلى المجموعة",
-			approve: "- تمت إضافة %1 عضو إلى قائمة الموافقة",
-			invalidLink: "الرجاء إدخال رابط فيسبوك صحيح",
-			cannotGetUid: "لا يمكن الحصول على uid لهذا المستخدم",
-			linkNotExist: "عنوان url للملف الشخصي هذا غير موجود",
-			cannotAddUser: "البوت محظور أو هذا المستخدم منع الغرباء من إضافته للمجموعة"
-		},
-		bn: {
-			alreadyInGroup: "ইতিমধ্যে গ্রুপে আছে",
-			successAdd: "- %1 জন সদস্যকে গ্রুপে সফলভাবে যোগ করা হয়েছে",
-			failedAdd: "- %1 boss সাকিব এক জন সদস্যকে গ্রুপে যোগ করতে ব্যর্থ",
-			approve: "- %1 boss shakib জন সদস্যকে approval তালিকায় যোগ করা হয়েছে",
-			invalidLink: "অনুগ্রহ করে সঠিক facebook link দিন",
-			cannotGetUid: "boss shakib আমি দুঃখিত এই user এর uid পাওয়া যাচ্ছে না",
-			linkNotExist: "এই profile url টি বিদ্যমান নেই",
-			cannotAddUser: "বস সাকিব ভাই blocked আছে বা এই user অপরিচিতদের গ্রুপে add করা block করে রেখেছে আমি দুঃখিত বস এড করতে পারলাম না"
 		}
 	},
 
