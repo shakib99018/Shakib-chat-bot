@@ -18,25 +18,22 @@ const Prism = require("./func/prism.js");
 const { config } = global.GoatBot;
 const { gmailAccount } = config.credentials;
 const { clientId, clientSecret, refreshToken, apiKey: googleApiKey } = gmailAccount;
-if (!clientId) {
-	log.err("CREDENTIALS", `Please provide a valid clientId in file ${path.normalize(global.client.dirConfig)}`);
-	process.exit();
-}
-if (!clientSecret) {
-	log.err("CREDENTIALS", `Please provide a valid clientSecret in file ${path.normalize(global.client.dirConfig)}`);
-	process.exit();
-}
-if (!refreshToken) {
-	log.err("CREDENTIALS", `Please provide a valid refreshToken in file ${path.normalize(global.client.dirConfig)}`);
-	process.exit();
+const googleCredentialsMissing = !clientId || !clientSecret || !refreshToken;
+if (googleCredentialsMissing) {
+	const configPath = global.client?.dirConfig ? path.normalize(global.client.dirConfig) : "config.json";
+	log.warn("CREDENTIALS", `Google credentials (clientId/clientSecret/refreshToken) are not fully configured in ${configPath}. Google Drive upload and dashboard email features are disabled.`);
 }
 
-const oauth2ClientForGGDrive = new google.auth.OAuth2(clientId, clientSecret, "https://developers.google.com/oauthplayground");
-oauth2ClientForGGDrive.setCredentials({ refresh_token: refreshToken });
-const driveApi = google.drive({
-	version: 'v3',
-	auth: oauth2ClientForGGDrive
-});
+let oauth2ClientForGGDrive;
+let driveApi;
+if (!googleCredentialsMissing) {
+	oauth2ClientForGGDrive = new google.auth.OAuth2(clientId, clientSecret, "https://developers.google.com/oauthplayground");
+	oauth2ClientForGGDrive.setCredentials({ refresh_token: refreshToken });
+	driveApi = google.drive({
+		version: 'v3',
+		auth: oauth2ClientForGGDrive
+	});
+}
 const word = [
 	'A', 'Á', 'À', 'Ả', 'Ã', 'Ạ', 'a', 'á', 'à', 'ả', 'ã', 'ạ',
 	'Ă', 'Ắ', 'Ằ', 'Ẳ', 'Ẵ', 'Ặ', 'ă', 'ắ', 'ằ', 'ẳ', 'ẵ', 'ặ',
@@ -112,21 +109,9 @@ function setErrorUptime() {
 	global.statusAccountBot = 'block spam';
 	global.responseUptimeCurrent = global.responseUptimeError;
 }
-
-// JSON.stringify(err) can throw on axios/circular errors (request/response
-// objects reference each other). Check the message/known fields directly
-// instead of stringifying the whole error object.
-function isSpamError(err) {
-	if (!err) return false;
-	const msg = (err.message || err.error || err.errorSummary || "") + "";
-	if (msg.toLowerCase().includes("spam")) return true;
-	try {
-		return JSON.stringify(err).includes('spam');
-	} catch (_) {
-		return false;
-	}
-}
-const defaultStderrClearLine = process.stderr.clearLine;
+const defaultStderrClearLine = typeof process.stderr.clearLine === "function"
+	? process.stderr.clearLine.bind(process.stderr)
+	: () => { };
 
 
 function convertTime(miliSeconds, replaceSeconds = "s", replaceMinutes = "m", replaceHours = "h", replaceDays = "d", replaceMonths = "M", replaceYears = "y", notShowZero = false) {
@@ -359,6 +344,32 @@ function jsonStringifyColor(obj, filter, indent, level) {
 }
 
 
+function trackMessageOfBot(result) {
+	// Remember message IDs sent by the bot so reaction features can verify
+	// that a reacted message really belongs to the bot.
+	try {
+		if (!global.temp.messagesOfBot || typeof global.temp.messagesOfBot.add !== "function")
+			global.temp.messagesOfBot = new Set();
+		const set = global.temp.messagesOfBot;
+		const ids = [];
+		if (typeof result === "string")
+			ids.push(result);
+		else if (result && typeof result === "object") {
+			if (result.messageID)
+				ids.push(result.messageID);
+			if (Array.isArray(result.messageIDs))
+				ids.push(...result.messageIDs);
+		}
+		for (const id of ids)
+			if (id)
+				set.add(String(id));
+		// Keep the set from growing forever.
+		if (set.size > 2000)
+			global.temp.messagesOfBot = new Set([...set].slice(-1000));
+	}
+	catch (e) { /* non-fatal */ }
+}
+
 function message(api, event) {
 	async function sendMessageError(err) {
 		if (typeof err === "object" && !err.stack)
@@ -371,11 +382,12 @@ function message(api, event) {
 		send: async (form, callback) => {
 			try {
 				global.statusAccountBot = 'good';
-				return await api.sendMessage(form, event.threadID, callback);
+				const res = await api.sendMessage(form, event.threadID, callback);
+				trackMessageOfBot(res);
+				return res;
 			}
 			catch (err) {
-				console.error("[message.send] sendMessage failed:", err && err.message ? err.message : err);
-				if (isSpamError(err)) {
+				if (JSON.stringify(err).includes('spam')) {
 					setErrorUptime();
 					throw err;
 				}
@@ -384,21 +396,32 @@ function message(api, event) {
 		reply: async (form, callback) => {
 			try {
 				global.statusAccountBot = 'good';
-				return await api.sendMessage(form, event.threadID, callback, event.messageID);
+				const res = await api.sendMessage(form, event.threadID, callback, event.messageID);
+				trackMessageOfBot(res);
+				return res;
 			}
 			catch (err) {
-				console.error("[message.reply] sendMessage failed:", err && err.message ? err.message : err);
-				if (isSpamError(err)) {
+				if (JSON.stringify(err).includes('spam')) {
 					setErrorUptime();
 					throw err;
 				}
 			}
 		},
-		unsend: async (messageID, callback) => await api.unsendMessage(messageID, callback),
-		reaction: async (emoji, messageID, callback) => {
+		unsend: async (messageID, threadID, callback) => {
+			if (typeof threadID === "function") {
+				callback = threadID;
+				threadID = undefined;
+			}
+			return await api.unsendMessage(messageID, threadID || event.threadID, callback);
+		},
+		reaction: async (emoji, messageID, threadID, callback) => {
+			if (typeof threadID === "function") {
+				callback = threadID;
+				threadID = undefined;
+			}
 			try {
 				global.statusAccountBot = 'good';
-				return await api.setMessageReaction(emoji, messageID, callback, true);
+				return await api.setMessageReaction(emoji, messageID, threadID || event.threadID, callback, true);
 			}
 			catch (err) {
 				if (JSON.stringify(err).includes('spam')) {
@@ -810,6 +833,8 @@ const drive = {
 	default: driveApi,
 	parentID: "",
 	async uploadFile(fileName, mimeType, file) {
+		if (!driveApi)
+			throw new Error("Google Drive is not configured (missing credentials in config.json).");
 		if (!file && typeof fileName === "string") {
 			file = mimeType;
 			mimeType = undefined;
@@ -836,6 +861,8 @@ const drive = {
 	},
 
 	async deleteFile(id) {
+		if (!driveApi)
+			throw new Error("Google Drive is not configured (missing credentials in config.json).");
 		if (!id || typeof id !== "string")
 			throw new Error('The first argument (id) must be a string');
 		try {
@@ -856,6 +883,8 @@ const drive = {
 	},
 
 	async getFile(id, responseType) {
+		if (!driveApi)
+			throw new Error("Google Drive is not configured (missing credentials in config.json).");
 		if (!id || typeof id !== "string")
 			throw new Error('The first argument (id) must be a string');
 		if (!responseType)
@@ -883,6 +912,8 @@ const drive = {
 	},
 
 	async getFileName(id) {
+		if (!driveApi)
+			throw new Error("Google Drive is not configured (missing credentials in config.json).");
 		if (!id || typeof id !== "string")
 			throw new Error('The first argument (id) must be a string');
 		const { fileNames: tempFileNames } = global.temp.filesOfGoogleDrive;
@@ -902,6 +933,8 @@ const drive = {
 	},
 
 	async makePublic(id) {
+		if (!driveApi)
+			throw new Error("Google Drive is not configured (missing credentials in config.json).");
 		if (!id || typeof id !== "string")
 			throw new Error('The first argument (id) must be a string');
 		try {
@@ -922,6 +955,8 @@ const drive = {
 	},
 
 	async checkAndCreateParentFolder(folderName) {
+		if (!driveApi)
+			throw new Error("Google Drive is not configured (missing credentials in config.json).");
 		if (!folderName || typeof folderName !== "string")
 			throw new Error('The first argument (folderName) must be a string');
 		let parentID;
@@ -1044,6 +1079,76 @@ class GoatBotApis {
 	}
 }
 
+/**
+ * Damerau-Levenshtein distance between two strings (case-insensitive).
+ * Counts insertions, deletions, substitutions and adjacent transpositions.
+ * Used to suggest the closest command name when the user makes a typo.
+ */
+function levenshteinDistance(a, b) {
+	a = String(a).toLowerCase();
+	b = String(b).toLowerCase();
+	if (a === b)
+		return 0;
+	if (a.length === 0)
+		return b.length;
+	if (b.length === 0)
+		return a.length;
+	const prevPrev = [];
+	let prev = [];
+	for (let j = 0; j <= b.length; j++)
+		prev[j] = j;
+	for (let i = 1; i <= a.length; i++) {
+		const curr = [i];
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			curr[j] = Math.min(
+				prev[j] + 1, // deletion
+				curr[j - 1] + 1, // insertion
+				prev[j - 1] + cost // substitution
+			);
+			// adjacent transposition
+			if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])
+				curr[j] = Math.min(curr[j], prevPrev[j - 2] + 1);
+		}
+		for (let j = 0; j <= b.length; j++)
+			prevPrev[j] = prev[j];
+		prev = curr;
+	}
+	return prev[b.length];
+}
+
+/**
+ * Find the closest matching command name for a mistyped input.
+ * @param {string} input The asked (wrong) command name
+ * @param {Map} commands GoatBot.commands map
+ * @param {Map} aliases GoatBot.aliases map
+ * @returns {{name: string, distance: number}|null} The closest command, or null if nothing is close enough
+ */
+function findClosestCommand(input, commands, aliases) {
+	if (!input)
+		return null;
+	input = String(input).toLowerCase();
+	const candidates = [];
+	for (const name of commands.keys()) {
+		candidates.push({ name, distance: levenshteinDistance(input, name) });
+		if (aliases) {
+			for (const [alias, target] of aliases.entries()) {
+				if (target === name)
+					candidates.push({ name, distance: levenshteinDistance(input, alias) });
+			}
+		}
+	}
+	if (candidates.length === 0)
+		return null;
+	candidates.sort((a, b) => a.distance - b.distance);
+	const best = candidates[0];
+	// Only suggest when reasonably close: at most ~40% of the input length differs.
+	const threshold = Math.max(1, Math.floor(input.length * 0.4));
+	if (best.distance > threshold)
+		return null;
+	return best;
+}
+
 const utils = {
 	CustomError,
 	TaskQueue,
@@ -1061,6 +1166,8 @@ const utils = {
 	getText: require("./languages/makeFuncGetLangs.js"),
 	getTime,
 	getType,
+	findClosestCommand,
+	levenshteinDistance,
 	isHexColor,
 	isNumber,
 	jsonStringifyColor,
